@@ -1,37 +1,104 @@
-#if !defined( ENTITY_STATEH )
-#define ENTITY_STATEH
+#define BOUNCE_METAL		BREAK_METAL
+#define BOUNCE_FLESH		BREAK_FLESH
+#define BOUNCE_WOOD			BREAK_WOOD
+#define BOUNCE_SHRAP		0x10
+#define BOUNCE_SHELL		0x20
+#define BOUNCE_CONCRETE		BREAK_CONCRETE
+#define BOUNCE_SHOTSHELL		0x80
 
-#define WHANDAIMBOT_TYPE_FALLBACKS_DEFINED
+// Temp entity bounce sound types
+#define TE_BOUNCE_NULL		0
+#define TE_BOUNCE_SHELL		1
+#define TE_BOUNCE_SHOTSHELL	2
 
-#include "vector.h"
+// Rendering constants
+enum 
+{	
+	kRenderNormal,		// src
+	kRenderTransColor,		// c*a+dest*(1-a)
+	kRenderTransTexture,	// src*a+dest*(1-a)
+	kRenderGlow,		// src*a+dest -- No Z buffer checks
+	kRenderTransAlpha,		// src*srca+dest*(1-srca)
+	kRenderTransAdd,		// src*a+dest
+	kRenderWorldGlow		// Same as kRenderGlow but not fixed size in screen space
+};
 
-#ifndef byte
-typedef unsigned char byte;
-#endif
+enum 
+{	
+	kRenderFxNone = 0, 
+	kRenderFxPulseSlow, 
+	kRenderFxPulseFast, 
+	kRenderFxPulseSlowWide, 
+	kRenderFxPulseFastWide, 
+	kRenderFxFadeSlow, 
+	kRenderFxFadeFast, 
+	kRenderFxSolidSlow, 
+	kRenderFxSolidFast, 	   
+	kRenderFxStrobeSlow, 
+	kRenderFxStrobeFast, 
+	kRenderFxStrobeFaster, 
+	kRenderFxFlickerSlow, 
+	kRenderFxFlickerFast,
+	kRenderFxNoDissipation,
+	kRenderFxDistort,			// Distort/scale/translate flicker
+	kRenderFxHologram,			// kRenderFxDistort + distance fade
+	kRenderFxDeadPlayer,		// kRenderAmt is the player index
+	kRenderFxExplode,			// Scale up really big!
+	kRenderFxGlowShell,			// Glowing Shell
+	kRenderFxClampMinScale		// Keep this sprite from getting very small (SPRITES only!)
+};
 
-#ifndef qboolean
+typedef int		func_t;
+typedef int		string_t;
+
+typedef unsigned char	byte;
+typedef unsigned short	word;
+
+#undef true
+#undef false
+
+#ifndef __cplusplus
+typedef enum { false, true }	qboolean;
+#else 
 typedef int qboolean;
-#endif
-
-#ifndef string_t
-typedef int string_t;
 #endif
 
 #ifndef COLOR24_TYPE_DEFINED
 #define COLOR24_TYPE_DEFINED
-typedef struct color24_s
+typedef struct
 {
-    byte r;
-    byte g;
-    byte b;
+	byte	r, g, b;
 } color24;
 #endif
 
-#ifndef edict_t
-struct edict_s;
-typedef struct edict_s edict_t;
-#endif
+typedef struct
+{
+	unsigned	r, g, b, a;
+} colorVec;
 
-#ifndef vec3_t
-#define vec3_t Vector
-#endif
+typedef struct link_s
+{
+	struct link_s	*prev, *next;
+} link_t;
+
+typedef struct edict_s edict_t;
+
+typedef struct
+{
+	vec3_t	normal;
+	float	dist;
+} plane_t;
+
+typedef struct
+{
+	qboolean	allsolid;		// if true, plane is not valid
+	qboolean	startsolid;	// if true, the initial point was in a solid area
+	qboolean	inopen, inwater;
+	float	fraction;		// time completed, 1.0 = didn't hit anything
+	vec3_t	endpos;		// final position
+	plane_t	plane;		// surface normal at impact
+	edict_t	*ent;		// entity the surface is on
+	int		hitgroup;		// 0 == generic, non zero is specific body part
+} trace_t;
+
+#endif//CONST_H
