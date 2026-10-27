@@ -32,10 +32,13 @@ Vector CAimbot::GetHitboxPos(cl_entity_t *ent, int hitbox) {
     if (!pStudioHeader) return ent->origin;
     
     mstudiobbox_t *pHitbox = (mstudiobbox_t *)((byte *)pStudioHeader + pStudioHeader->hitboxindex);
-    if (hitbox >= pStudioHeader->numhitboxes) hitbox = 0;
+    if (hitbox < 0 || hitbox >= pStudioHeader->numhitboxes) hitbox = 0;
     
-    // Матрица костей (уже вычислена движком для текущего кадра)
-    float (*bonetransform)[3][4] = ent->bones;
+    float (*bonetransform)[3][4] = nullptr;
+    if (ent && ent->bones)
+    {
+        bonetransform = (float (*)[3][4])ent->bones;
+    }
     if (!bonetransform) return ent->origin + Vector(0, 0, 64);
     
     Vector vMin = pHitbox[hitbox].bbmin;
