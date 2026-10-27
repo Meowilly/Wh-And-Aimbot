@@ -86,6 +86,11 @@ typedef struct link_s
 
 typedef struct edict_s edict_t;
 
+// The shared engine/DLL entity layout is defined in common/entity_state.h.
+// Some code paths include this file directly, so make sure that type is always available
+// before any edict_t-contained members are declared.
+#include "../common/entity_state.h"
+
 typedef struct
 {
 	vec3_t	normal;
