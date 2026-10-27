@@ -1,5 +1,5 @@
-#ifndef PROGDEFS_H
-#define PROGDEFS_H
+#ifndef ENTITY_STATEH
+#define ENTITY_STATEH
 #ifdef _WIN32
 #ifndef __MINGW32__
 #pragma once
@@ -227,4 +227,4 @@ typedef struct entvars_s
 	edict_t		*euser4;
 } entvars_t;
 
-#endif // PROGDEFS_H
+#endif // ENTITY_STATEH
