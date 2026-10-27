@@ -140,3 +140,4 @@ struct entity_state_s
 	vec3_t		vuser4;
 };
 
+#endif // ENTITY_STATEH
