@@ -1,692 +1,260 @@
-/***
-*
-*	Copyright (c) 1996-2002, Valve LLC. All rights reserved.
-*	
-*	This product contains software technology licensed from Id 
-*	Software, Inc. ("Id Technology").  Id Technology (c) 1996 Id Software, Inc. 
-*	All Rights Reserved.
-*
-*   Use, distribution, and modification of this source code and/or resulting
-*   object code is restricted to non-commercial enhancements to products from
-*   Valve LLC.  All other use, distribution, or modification is prohibited
-*   without written permission from Valve LLC.
-*
-****/
-//
-// hud.cpp
-//
-// implementation of CHud class
-//
+// ==== ESP v3.0 ULTRA OPTIMIZED ====
+#include <math.h>
 
-#include <new>
+#define CHEAT_RAD 0.01745329252f
+#define CHEAT_INV_RAD 57.29578f
+#define CHEAT_MAX_PLAYERS 32
+#define CHEAT_UPDATE_TIME 0.25f
 
-#include "hud.h"
-#include "cl_util.h"
-#include <string.h>
-#include <stdio.h>
-#include <assert.h>
-#include "parsemsg.h"
-
-#include "demo.h"
-#include "demo_api.h"
-#include "vgui_parser.h"
-#include "environment.h"
-
-#include "camera.h"
-
-#include "draw_util.h"
-
-#if _WIN32
-#define strncasecmp _strnicmp
-#endif
-
-cvar_t *cl_fog_r;
-cvar_t *cl_fog_g;
-cvar_t *cl_fog_b;
-cvar_t *cl_fog_density;
-
-extern client_sprite_t *GetSpriteList(client_sprite_t *pList, const char *psz, int iRes, int iCount);
-
-// Team Colors
-int iNumberOfTeamColors = 3;
-int iTeamColors[3][3] =
-{
-	{ 204, 204, 204 }, // Spectators
-	{ 255, 64, 64 }, // CT's
-	{ 153, 204, 255 }  // T's
+struct CheatPlayer_t {
+    vec3_t origin;
+    vec3_t bones[6]; // 0=голова, 1=шея, 2=грудь, 3=пах, 4=л.стопа, 5=п.стопа
+    int health;
+    int dist_sq;
+    bool valid;
 };
 
-class CCStrikeVoiceStatusHelper : public IVoiceStatusHelper
+static CheatPlayer_t g_CheatPlayers[CHEAT_MAX_PLAYERS + 1];
+static float g_CheatLastUpdate = 0.0f;
+static int g_CheatLocalTeam = 0;
+static vec3_t g_CheatLocalOrigin;
+static cl_entity_t *g_CheatLocalPlayer = nullptr;
+
+static vec3_t g_CheatFwd, g_CheatRight, g_CheatUp;
+static float g_CheatFovScale = 1.0f;
+static int g_CheatScreenW = 0, g_CheatScreenH = 0;
+
+static const int CHEAT_BONE_PARENTS[6] = { -1, 0, 1, 2, 3, 3 };
+
+static void Cheat_UpdateViewMatrix()
 {
-public:
-	virtual void GetPlayerTextColor( int entindex, int color[3] )
-	{
-		color[0] = color[1] = color[2] = 255;
-
-		if ( entindex < MAX_PLAYERS )
-		{
-			int iTeam = g_PlayerExtraInfo[entindex].teamnumber;
-
-			if ( iTeam < 0 )
-			{
-				iTeam = 0;
-			}
-
-			iTeam = iTeam % iNumberOfTeamColors;
-
-			color[0] = iTeamColors[iTeam][0];
-			color[1] = iTeamColors[iTeam][1];
-			color[2] = iTeamColors[iTeam][2];
-		}
-	}
-
-	virtual void UpdateCursorState()
-	{
-		// gViewPort->UpdateCursorState();
-	}
-
-	virtual int GetAckIconHeight()
-	{
-		return gHUD.m_iFontHeight * 3 + 6;
-	}
-
-	virtual bool CanShowSpeakerLabels()
-	{
-		return !gHUD.m_Scoreboard.m_bForceDraw && !gHUD.m_Scoreboard.m_bShowscoresHeld;
-	}
-
-	const char *GetPlayerLocation( int entindex ) override
-	{
-		if ( entindex >= 1 && entindex <= MAX_PLAYERS )
-		{
-			return g_PlayerExtraInfo[entindex].location;
-		}
-
-		return "";
-	}
-};
-static CCStrikeVoiceStatusHelper g_VoiceStatusHelper;
-
-wrect_t nullrc = { 0, 0, 0, 0 };
-float g_lastFOV = 0.0;
-const char *sPlayerModelFiles[12] =
-{
-	"models/player.mdl",
-	"models/player/leet/leet.mdl", // t
-	"models/player/gign/gign.mdl", // ct
-	"models/player/vip/vip.mdl", //ct
-	"models/player/gsg9/gsg9.mdl", // ct
-	"models/player/guerilla/guerilla.mdl", // t
-	"models/player/arctic/arctic.mdl", // t
-	"models/player/sas/sas.mdl", // ct
-	"models/player/terror/terror.mdl", // t
-	"models/player/urban/urban.mdl", // ct
-	"models/player/spetsnaz/spetsnaz.mdl", // ct
-	"models/player/militia/militia.mdl" // t
-};
-
-void __CmdFunc_InputCommandSpecial()
-{
-#ifdef _CS16CLIENT_ALLOW_SPECIAL_SCRIPTING
-	gEngfuncs.pfnClientCmd("_special");
-#endif
+    if( !g_CheatLocalPlayer ) return;
+    const vec3_t &a = g_CheatLocalPlayer->curstate.angles;
+    float sy = sinf(a[1]*CHEAT_RAD), cy = cosf(a[1]*CHEAT_RAD);
+    float sp = sinf(a[0]*CHEAT_RAD), cp = cosf(a[0]*CHEAT_RAD);
+    float sr = sinf(a[2]*CHEAT_RAD), cr = cosf(a[2]*CHEAT_RAD);
+    
+    g_CheatFwd[0] = cp*cy;   g_CheatFwd[1] = cp*sy;   g_CheatFwd[2] = -sp;
+    g_CheatRight[0] = -sr*sp*cy + -cr*-sy;
+    g_CheatRight[1] = -sr*sp*sy + -cr*cy;
+    g_CheatRight[2] = -sr*cp;
+    g_CheatUp[0] = cr*sp*cy + -sr*-sy;
+    g_CheatUp[1] = cr*sp*sy + -sr*cy;
+    g_CheatUp[2] = cr*cp;
+    
+    float fov = g_CheatLocalPlayer->curstate.fov;
+    if( fov < 1.0f ) fov = 90.0f;
+    g_CheatFovScale = tanf( fov * 0.5f * CHEAT_RAD );
+    g_CheatScreenW = ScreenWidth;
+    g_CheatScreenH = ScreenHeight;
 }
 
-void __CmdFunc_GunSmoke()
+static inline bool Cheat_W2S( const vec3_t world, int &sx, int &sy )
 {
-	if( gHUD.cl_gunsmoke->value )
-		gEngfuncs.Cvar_SetValue( "cl_gunsmoke", 0 );
-	else
-		gEngfuncs.Cvar_SetValue( "cl_gunsmoke", 1 );
+    vec3_t v;
+    v[0] = world[0] - g_CheatLocalOrigin[0];
+    v[1] = world[1] - g_CheatLocalOrigin[1];
+    v[2] = world[2] - g_CheatLocalOrigin[2] - 12.0f;
+    
+    float z = v[0]*g_CheatFwd[0] + v[1]*g_CheatFwd[1] + v[2]*g_CheatFwd[2];
+    if( z < 8.0f ) return false;
+    
+    float inv_z = 1.0f / (z * g_CheatFovScale);
+    float x = v[0]*g_CheatRight[0] + v[1]*g_CheatRight[1] + v[2]*g_CheatRight[2];
+    float y = v[0]*g_CheatUp[0] + v[1]*g_CheatUp[1] + v[2]*g_CheatUp[2];
+    
+    sx = (int)(g_CheatScreenW * 0.5f * (1.0f + x * inv_z));
+    sy = (int)(g_CheatScreenH * 0.5f * (1.0f - y * inv_z));
+    return true;
 }
 
-/*
-============
-COM_FileBase
-============
-*/
-// Extracts the base name of a file (no path, no extension, assumes '/' as path separator)
-void COM_FileBase ( const char *in, char *out)
+static void Cheat_GetBone( const vec3_t &origin, float h, int bone, vec3_t out )
 {
-	int len, start, end;
-
-	len = strlen( in );
-
-	// scan backward for '.'
-	end = len - 1;
-	while ( end && in[end] != '.' && in[end] != '/' && in[end] != '\\' )
-		end--;
-
-	if ( in[end] != '.' )		// no '.', copy to end
-		end = len-1;
-	else
-		end--;					// Found ',', copy to left of '.'
-
-
-	// Scan backward for '/'
-	start = len-1;
-	while ( start >= 0 && in[start] != '/' && in[start] != '\\' )
-		start--;
-
-	if ( in[start] != '/' && in[start] != '\\' )
-		start = 0;
-	else
-		start++;
-
-	// Length of new sting
-	len = end - start + 1;
-
-	// Copy partial string
-	strncpy( out, &in[start], len );
-	// Terminate it
-	out[len] = 0;
+    static const float offsets[6][3] = {
+        {0, 0, 68},   // голова
+        {0, 0, 58},   // шея
+        {0, 0, 48},   // грудь
+        {0, 0, 28},   // пах
+        {-8, 0, 0},   // л.стопа
+        {8, 0, 0}     // п.стопа
+    };
+    out[0] = origin[0] + offsets[bone][0];
+    out[1] = origin[1] + offsets[bone][1];
+    out[2] = origin[2] + offsets[bone][2] * h;
 }
 
-/*
-=================
-HUD_IsGame
-
-=================
-*/
-int HUD_IsGame( const char *game )
+static void Cheat_UpdateCache()
 {
-	const char *gamedir;
-	char gd[ 1024 ];
-
-	gamedir = gEngfuncs.pfnGetGameDirectory();
-	if ( gamedir && gamedir[0] )
-	{
-		COM_FileBase( gamedir, gd );
-		if ( !stricmp( gd, game ) )
-			return 1;
-	}
-	return 0;
+    g_CheatLocalPlayer = gEngfuncs.GetLocalPlayer();
+    if( !g_CheatLocalPlayer ) return;
+    
+    g_CheatLocalTeam = g_CheatLocalPlayer->curstate.team;
+    VectorCopy( g_CheatLocalPlayer->curstate.origin, g_CheatLocalOrigin );
+    int localMsgNum = g_CheatLocalPlayer->curstate.messagenum;
+    
+    for( int i = 1; i <= CHEAT_MAX_PLAYERS; i++ )
+    {
+        g_CheatPlayers[i].valid = false;
+        if( i == g_CheatLocalPlayer->index ) continue;
+        
+        cl_entity_t *e = gEngfuncs.GetEntityByIndex( i );
+        if( !e || !e->model ) continue;
+        if( e->curstate.messagenum != localMsgNum ) continue;
+        if( e->curstate.team == g_CheatLocalTeam ) continue;
+        if( e->curstate.health <= 0 ) continue;
+        
+        float dx = e->curstate.origin[0] - g_CheatLocalOrigin[0];
+        float dy = e->curstate.origin[1] - g_CheatLocalOrigin[1];
+        float dz = e->curstate.origin[2] - g_CheatLocalOrigin[2];
+        g_CheatPlayers[i].dist_sq = (int)(dx*dx + dy*dy + dz*dz);
+        
+        float h = 1.0f;
+        if( e->model->maxs[2] > 0 )
+            h = (e->model->maxs[2] - e->model->mins[2]) / 72.0f;
+        
+        for( int b = 0; b < 6; b++ )
+            Cheat_GetBone( e->curstate.origin, h, b, g_CheatPlayers[i].bones[b] );
+        
+        VectorCopy( e->curstate.origin, g_CheatPlayers[i].origin );
+        g_CheatPlayers[i].health = e->curstate.health;
+        g_CheatPlayers[i].valid = true;
+    }
 }
 
-#define XASH_GENERATE_BUILDNUM
-
-#if defined(XASH_GENERATE_BUILDNUM)
-static const char *date = __DATE__;
-static const char *mon[12] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
-static char mond[12] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
-#endif
-
-char *Q_buildnum( void )
+static void Cheat_DrawNum( int x, int y, int num, float r, float g, float b )
 {
-// do not touch this! Only author of Xash3D can increase buildnumbers!
-// Xash3D SDL: HAHAHA! I TOUCHED THIS!
-	int m = 0, d = 0, y = 0;
-	static int b = 0;
-	static char buildnum[16];
-
-	if( b != 0 )
-		return buildnum;
-
-	for( m = 0; m < 11; m++ )
-	{
-		if( !strncasecmp( &date[0], mon[m], 3 ))
-			break;
-		d += mond[m];
-	}
-
-	d += atoi( &date[4] ) - 1;
-	y = atoi( &date[7] ) - 1900;
-	b = d + (int)((y - 1) * 365.25f );
-
-	if((( y % 4 ) == 0 ) && m > 1 )
-	{
-		b += 1;
-	}
-	//b -= 38752; // Feb 13 2007
-	b -= 41940; // Oct 29 2015.
-	// Happy birthday, cs16client! :)
-
-	snprintf( buildnum, sizeof(buildnum), "%i", b );
-
-	return buildnum;
+    char buf[12];
+    int pos = 0;
+    if( num < 0 ) { buf[pos++] = '-'; num = -num; }
+    if( num == 0 ) buf[pos++] = '0';
+    else {
+        char tmp[12];
+        int t = 0;
+        while( num > 0 ) { tmp[t++] = '0' + (num % 10); num /= 10; }
+        while( t > 0 ) buf[pos++] = tmp[--t];
+    }
+    buf[pos] = 0;
+    gEngfuncs.pfnDrawSetTextColor( r, g, b );
+    gEngfuncs.pfnDrawConsoleString( x, y, buf );
 }
 
-int __MsgFunc_ADStop( const char *name, int size, void *buf ) { return 1; }
-int __MsgFunc_ItemStatus( const char *name, int size, void *buf ) { return 1; }
-// int __MsgFunc_ReqState( const char *name, int size, void *buf ) { return 1; }
-int __MsgFunc_ForceCam( const char *name, int size, void *buf ) { return 1; }
-int __MsgFunc_Spectator( const char *name, int size, void *buf ) { return 1; }
-
-#ifdef __ANDROID__
-bool evdev_open = false;
-void __CmdFunc_MouseSucksOpen( void ) { evdev_open = true; }
-void __CmdFunc_MouseSucksClose( void ) { evdev_open = false; }
-#endif
-
-int __MsgFunc_Rain(const char *pszName, int iSize, void *pbuf)
+static void Cheat_Line( int x1, int y1, int x2, int y2, int r, int g, int b )
 {
-	return g_Environment.MsgFunc_Rain( pszName, iSize, pbuf );
+    if( (x1 < 0 && x2 < 0) || (x1 >= g_CheatScreenW && x2 >= g_CheatScreenW) ) return;
+    if( (y1 < 0 && y2 < 0) || (y1 >= g_CheatScreenH && y2 >= g_CheatScreenH) ) return;
+    
+    int dx = abs(x2 - x1), dy = abs(y2 - y1);
+    int sx = x1 < x2 ? 1 : -1, sy = y1 < y2 ? 1 : -1;
+    int err = dx - dy;
+    
+    while( true )
+    {
+        if( x1 >= 0 && x1 < g_CheatScreenW && y1 >= 0 && y1 < g_CheatScreenH )
+            gEngfuncs.pfnFillRGBA( x1, y1, 1, 1, r, g, b, 180 );
+        if( x1 == x2 && y1 == y2 ) break;
+        int e2 = err << 1;
+        if( e2 > -dy ) { err -= dy; x1 += sx; }
+        if( e2 < dx ) { err += dx; y1 += sy; }
+    }
 }
 
-int __MsgFunc_Snow(const char *pszName, int iSize, void *pbuf)
+static void Cheat_Skeleton( CheatPlayer_t &p )
 {
-	return g_Environment.MsgFunc_Snow( pszName, iSize, pbuf );
+    int x1, y1, x2, y2;
+    for( int i = 1; i < 6; i++ )
+    {
+        int parent = CHEAT_BONE_PARENTS[i];
+        if( !Cheat_W2S( p.bones[i], x1, y1 ) ) continue;
+        if( !Cheat_W2S( p.bones[parent], x2, y2 ) ) continue;
+        Cheat_Line( x1, y1, x2, y2, 255, 255, 0 ); // жёлтый скелет
+    }
+    if( Cheat_W2S( p.bones[0], x1, y1 ) )
+        gEngfuncs.pfnFillRGBA( x1-2, y1-2, 4, 4, 255, 0, 0, 220 ); // красная голова
 }
 
-int __MsgFunc_WeatherPos(const char *pszName, int iSize, void *pbuf)
+static void Cheat_Box( int x, int y, int w, int h, int r, int g, int b )
 {
-	return g_Environment.MsgFunc_WeatherPos( pszName, iSize, pbuf );
+    gEngfuncs.pfnFillRGBA( x, y, w, 1, r, g, b, 200 );
+    gEngfuncs.pfnFillRGBA( x, y+h, w, 1, r, g, b, 200 );
+    gEngfuncs.pfnFillRGBA( x, y, 1, h, r, g, b, 200 );
+    gEngfuncs.pfnFillRGBA( x+w, y, 1, h, r, g, b, 200 );
 }
 
-int __MsgFunc_ReceiveW(const char *pszName, int iSize, void *pbuf)
+static void CheatESP()
 {
-	return g_Environment.MsgFunc_ReceiveW( pszName, iSize, pbuf );
+    if( !g_CheatLocalPlayer || g_CheatLocalPlayer->curstate.health <= 0 ) return;
+    
+    float time = gEngfuncs.GetClientTime();
+    if( time - g_CheatLastUpdate > CHEAT_UPDATE_TIME )
+    {
+        Cheat_UpdateCache();
+        g_CheatLastUpdate = time;
+    }
+    
+    Cheat_UpdateViewMatrix();
+    
+    for( int i = 1; i <= CHEAT_MAX_PLAYERS; i++ )
+    {
+        if( !g_CheatPlayers[i].valid ) continue;
+        CheatPlayer_t &p = g_CheatPlayers[i];
+        
+        int x1, y1, x2, y2;
+        if( !Cheat_W2S( p.origin, x1, y1 ) ) continue;
+        if( !Cheat_W2S( p.bones[0], x2, y2 ) ) continue;
+        
+        int h = y1 - y2;
+        if( h < 10 ) h = 10;
+        int w = h >> 1;
+        int bx = x1 - (w >> 1);
+        int by = y2;
+        
+        int r = 255, g = 0, b = 0;
+        if( p.health > 75 ) { r = 0; g = 255; }
+        else if( p.health > 40 ) { r = g = 255; }
+        
+        Cheat_Skeleton( p );  // СКЕЛЕТ ЗДЕСЬ
+        Cheat_Box( bx, by, w, h, r, g, b );
+        
+        int hpH = (p.health * h) / 100;
+        gEngfuncs.pfnFillRGBA( bx-3, by, 2, h, 50, 50, 50, 180 );
+        gEngfuncs.pfnFillRGBA( bx-3, by+h-hpH, 2, hpH, r, g, b, 255 );
+        
+        Cheat_DrawNum( bx, by-12, i, 1, 1, 1 );
+        int dist_m = (int)(sqrtf((float)p.dist_sq) / 40.0f);
+        Cheat_DrawNum( bx, by+h+2, dist_m, 0.7f, 0.7f, 0.7f );
+    }
 }
 
-// This is called every time the DLL is loaded
-void CHud :: Init( void )
+static void CheatAimbot( struct usercmd_s *cmd )
 {
-	SetGameType(); // call it first, so we will know gamedir at very early stage
-
-	HOOK_COMMAND_FUNC( "special", __CmdFunc_InputCommandSpecial, );
-	HOOK_COMMAND_FUNC( "gunsmoke", __CmdFunc_GunSmoke, );
-
-#ifdef __ANDROID__
-	HOOK_COMMAND_FUNC( "evdev_mouseopen", __CmdFunc_MouseSucksOpen );
-	HOOK_COMMAND_FUNC( "evdev_mouseclose", __CmdFunc_MouseSucksClose );
-#endif
-	
-	HOOK_MESSAGE( gHUD, Logo );
-	HOOK_MESSAGE( gHUD, ResetHUD );
-	HOOK_MESSAGE( gHUD, GameMode );
-	HOOK_MESSAGE( gHUD, InitHUD );
-	HOOK_MESSAGE( gHUD, ViewMode );
-	HOOK_MESSAGE( gHUD, SetFOV );
-	HOOK_MESSAGE( gHUD, Concuss );
-	HOOK_MESSAGE( gHUD, ServerName );
-	HOOK_MESSAGE( gHUD, ShadowIdx );
-
-	gEngfuncs.pfnHookUserMsg( "ADStop", __MsgFunc_ADStop );
-	gEngfuncs.pfnHookUserMsg( "ItemStatus", __MsgFunc_ItemStatus );
-	// gEngfuncs.pfnHookUserMsg( "ReqState", __MsgFunc_ReqState );
-	gEngfuncs.pfnHookUserMsg( "ForceCam", __MsgFunc_ForceCam );
-	gEngfuncs.pfnHookUserMsg( "Spectator", __MsgFunc_Spectator );
-
-	HOOK_MESSAGE( gHUD, Fog );
-
-	gEngfuncs.pfnHookUserMsg( "Rain", __MsgFunc_Rain );
-	gEngfuncs.pfnHookUserMsg( "Snow", __MsgFunc_Snow );
-	gEngfuncs.pfnHookUserMsg( "WeatherPos", __MsgFunc_WeatherPos );
-	gEngfuncs.pfnHookUserMsg( "ReceiveW", __MsgFunc_ReceiveW );
-
-	CVAR_CREATE( "_vgui_menus", "1", FCVAR_ARCHIVE | FCVAR_USERINFO );
-	CVAR_CREATE( "_cl_autowepswitch", "1", FCVAR_ARCHIVE | FCVAR_USERINFO );
-	CVAR_CREATE( "_ah", "0", FCVAR_ARCHIVE | FCVAR_USERINFO );
-
-	// TODO remove hack later
-	CVAR_CREATE( "numericalmenu", "1", FCVAR_ARCHIVE );
-	CVAR_CREATE( "numericalmenu_clientonly", "1", FCVAR_ARCHIVE );
-	CVAR_CREATE( "checkscoreboard", "1", FCVAR_ARCHIVE );
-	cscl_currentmap = CVAR_CREATE( "cscl_currentmap", "", 0 );
-	cscl_mapprefix = CVAR_CREATE( "cscl_mapprefix", "", 0 );
-	cscl_currentmoney = CVAR_CREATE( "cscl_currentmoney", "0", 0 );
-	CVAR_CREATE( "teammenu_showscores", "0", FCVAR_ARCHIVE );
-	CVAR_CREATE( "menu_bg_fill", "0", FCVAR_ARCHIVE );
-	CVAR_CREATE( "buymenu_stayon", "0", FCVAR_ARCHIVE );
-
-	hud_textmode = CVAR_CREATE( "hud_textmode", "0", FCVAR_ARCHIVE );
-	hud_colored  = CVAR_CREATE( "hud_colored", "0", FCVAR_ARCHIVE );
-	cl_righthand = CVAR_CREATE( "cl_righthand", "1", FCVAR_ARCHIVE );
-	cl_weather   = CVAR_CREATE( "cl_weather", "1", FCVAR_ARCHIVE );
-	cl_minmodels = CVAR_CREATE( "cl_minmodels", "0", FCVAR_ARCHIVE );
-	cl_min_t     = CVAR_CREATE( "cl_min_t", "1", FCVAR_ARCHIVE );
-	cl_min_ct    = CVAR_CREATE( "cl_min_ct", "2", FCVAR_ARCHIVE );
-	default_fov  = CVAR_CREATE( "default_fov", "90", 0 );
-	m_pCvarDraw  = CVAR_CREATE( "hud_draw", "1", FCVAR_ARCHIVE );
-	fastsprites  = CVAR_CREATE( "fastsprites", "0", FCVAR_ARCHIVE );
-	cl_gunsmoke  = CVAR_CREATE( "cl_gunsmoke", "0", FCVAR_ARCHIVE );
-	cl_weapon_sparks = CVAR_CREATE( "cl_weapon_sparks", "1", FCVAR_ARCHIVE );
-	cl_weapon_wallpuff = CVAR_CREATE( "cl_weapon_wallpuff", "1", FCVAR_ARCHIVE );
-	zoom_sens_ratio = CVAR_CREATE( "zoom_sensitivity_ratio", "1.2", 0 );
-
-	cl_charset = gEngfuncs.pfnGetCvarPointer( "cl_charset" );
-	con_charset = gEngfuncs.pfnGetCvarPointer( "con_charset" );
-
-	cl_viewbob = CVAR_CREATE( "cl_viewbob", "1", FCVAR_ARCHIVE );
-
-	m_pShowHealth = CVAR_CREATE( "scoreboard_showhealth", "1", FCVAR_ARCHIVE );
-	m_pShowMoney = CVAR_CREATE( "scoreboard_showmoney", "1", FCVAR_ARCHIVE );
-
-	// The cvar was taken from the OpenAG client
-	m_pCvarColor = CVAR_CREATE( "hud_color", "255 160 0", FCVAR_ARCHIVE );
-
-	if ( gEngfuncs.pfnGetCvarFloat( "developer" ) > 0.0f )
-	{
-		cl_fog_density = CVAR_CREATE( "cl_fog_density", "0", 0 );
-		cl_fog_r = CVAR_CREATE( "cl_fog_r", "0", 0 );
-		cl_fog_g = CVAR_CREATE( "cl_fog_g", "0", 0 );
-		cl_fog_b = CVAR_CREATE( "cl_fog_b", "0", 0 );
-	}
-
-	CVAR_CREATE( "cscl_ver", Q_buildnum(), 1<<14 | FCVAR_USERINFO ); // init and userinfo
-
-	m_iLogo = 0;
-	m_iFOV = 0;
-
-	m_pSpriteList = NULL;
-
-	// Clear any old HUD list
-	for( HUDLIST *pList = m_pHudList; pList; pList = m_pHudList )
-	{
-		m_pHudList = m_pHudList->pNext;
-		delete pList;
-	}
-	m_pHudList = NULL;
-
-	// In case we get messages before the first update -- time will be valid
-	m_flTime = 1.0;
-	m_iNoConsolePrint = 0;
-	m_szServerName[0] = 0;
-
-
-
-	Localize_Init();
-
-	// fullscreen overlays
-	m_SniperScope.Init();
-	m_NVG.Init();
-
-	// Game HUD things
-	m_Ammo.Init();
-	m_Health.Init();
-	m_Radio.Init();
-	m_Timer.Init();
-	m_Money.Init();
-	m_AmmoSecondary.Init();
-	m_Train.Init();
-	m_Battery.Init();
-	m_StatusIcons.Init();
-	m_Radar.Init();
-	m_Scenario.Init();
-
-	// chat, death notice, status bars and other
-	m_SayText.Init();
-	m_Spectator.Init();
-	m_Geiger.Init();
-	m_Flash.Init();
-	m_Message.Init();
-	m_StatusBar.Init();
-	m_DeathNotice.Init();
-	m_TextMessage.Init();
-	m_MOTD.Init();
-
-	// all things that have own background and must be drawn last
-	m_ProgressBar.Init();
-	m_Menu.Init();
-
-	// Spectator GUI is not need in singleplayer czeror
-	if( GetGameType() != GAME_CZERODS )
-		m_SpectatorGui.Init();
-
-	m_Scoreboard.Init();
-
-	GetClientVoice()->Init( &g_VoiceStatusHelper );
-
-
-
-	//ServersInit();
-
-	gEngfuncs.Con_Printf( "%s: ^2CS16Client^7 ver. %s initialized.\n", __FUNCTION__, CVAR_GET_STRING( "cscl_ver" ) );
-
-	MsgFunc_ResetHUD(0, 0, NULL );
-}
-
-// CHud destructor
-// cleans up memory allocated for m_rg* arrays
-CHud :: ~CHud()
-{
-	delete [] m_rghSprites;
-	delete [] m_rgrcRects;
-	delete [] m_rgszSpriteNames;
-
-	// Clear any old HUD list
-	for( HUDLIST *pList = m_pHudList; pList; pList = m_pHudList )
-	{
-		m_pHudList = m_pHudList->pNext;
-		delete pList;
-	}
-	m_pHudList = NULL;
-}
-
-void CHud :: VidInit( void )
-{
-	static bool firstinit = true;
-	m_scrinfo.iSize = sizeof( m_scrinfo );
-	GetScreenInfo( &m_scrinfo );
-
-	m_truescrinfo.iWidth = CVAR_GET_FLOAT("vid_width");
-	m_truescrinfo.iHeight = CVAR_GET_FLOAT("vid_height");
-
-	// ----------
-	// Load Sprites
-	// ---------
-	//	m_hsprFont = LoadSprite("sprites/%d_font.spr");
-	
-	m_hsprLogo = 0;
-
-	m_flScale = (float)TrueWidth / (float)ScreenWidth;
-
-	m_iRes = 640;
-
-	// Only load this once
-	if( !m_pSpriteList )
-	{
-		// we need to load the hud.txt, and all sprites within
-		m_pSpriteList = SPR_GetList("sprites/hud.txt", &m_iSpriteCountAllRes);
-
-		if( m_pSpriteList )
-		{
-			// count the number of sprites of the appropriate res
-			m_iSpriteCount = 0;
-			client_sprite_t *p = m_pSpriteList;
-			for ( int j = 0; j < m_iSpriteCountAllRes; j++ )
-			{
-				if ( p->iRes == m_iRes )
-					m_iSpriteCount++;
-				p++;
-			}
-
-			// allocated memory for sprite handle arrays
-			m_rghSprites      = new(std::nothrow) HSPRITE[m_iSpriteCount];
-			m_rgrcRects       = new(std::nothrow) wrect_t[m_iSpriteCount];
-			m_rgszSpriteNames = new(std::nothrow) char[m_iSpriteCount * MAX_SPRITE_NAME_LENGTH];;
-
-			if( !m_rghSprites || !m_rgrcRects || !m_rgszSpriteNames )
-			{
-				gEngfuncs.pfnConsolePrint("CHud::VidInit(): Cannot allocate memory");
-				if( g_iXash )
-					gRenderAPI.Host_Error("CHud::VidInit(): Cannot allocate memory");
-			}
-
-			p = m_pSpriteList;
-			for ( int index = 0, j = 0; j < m_iSpriteCountAllRes; j++ )
-			{
-				if ( p->iRes == m_iRes )
-				{
-					char sz[256];
-					sprintf(sz, "sprites/%s.spr", p->szSprite);
-					m_rghSprites[index] = SPR_Load(sz);
-					m_rgrcRects[index] = p->rc;
-					strncpy( &m_rgszSpriteNames[index * MAX_SPRITE_NAME_LENGTH], p->szName, MAX_SPRITE_NAME_LENGTH );
-
-					index++;
-				}
-
-				p++;
-			}
-		}
-	}
-	else
-	{
-		// we have already have loaded the sprite reference from hud.txt, but
-		// we need to make sure all the sprites have been loaded (we've gone through a transition, or loaded a save game)
-		client_sprite_t *p = m_pSpriteList;
-		int index = 0;
-		for ( int j = 0; j < m_iSpriteCountAllRes; j++ )
-		{
-			if ( p->iRes == m_iRes )
-			{
-				char sz[256];
-				sprintf( sz, "sprites/%s.spr", p->szSprite );
-				m_rghSprites[index] = SPR_Load(sz);
-				index++;
-			}
-
-			p++;
-		}
-	}
-
-	// assumption: number_1, number_2, etc, are all listed and loaded sequentially
-	m_HUD_number_0 = GetSpriteIndex( "number_0" );
-
-	if( m_HUD_number_0 == -1 && g_iXash )
-	{
-		gRenderAPI.Host_Error( "Failed to get number_0 sprite index. Check your game data!" );
-		return;
-	}
-
-	if( g_iXash )
-	{
-		// get internal texture
-		m_WhiteTex = gRenderAPI.GL_LoadTexture( "*white", NULL, 0, 0 );
-	}
-
-	m_iFontWidth  = GetSpriteRect(m_HUD_number_0).Width();
-	m_iFontHeight = GetSpriteRect(m_HUD_number_0).Height();
-
-	m_hGasPuff = SPR_Load("sprites/gas_puff_01.spr");
-
-	for( HUDLIST *pList = m_pHudList; pList; pList = pList->pNext )
-		pList->p->VidInit();
-
-#if 0
-	if( firstinit && gEngfuncs.CheckParm( "-firsttime", NULL ) )
-	{
-		ConsolePrint( "firstrun\n" );
-
-		ClientCmd( "exec touch_presets/phone_ahsim" );
-		gEngfuncs.Cvar_Set( "touch_config_file", "touch_presets/phone_ahsim.cfg" );
-	}
-#endif
-
-	firstinit = false;
-}
-
-void CHud::Reset( void )
-{
-	for( HUDLIST *pList = m_pHudList; pList; pList = pList->pNext )
-		pList->p->Reset();
-}
-
-void CHud::Shutdown( void )
-{
-	for( HUDLIST *pList = m_pHudList; pList; pList = pList->pNext )
-	{
-		pList->p->Shutdown();
-	}
-}
-
-int CHud::MsgFunc_Logo(const char *pszName,  int iSize, void *pbuf)
-{
-	BufferReader reader( pszName, pbuf, iSize );
-
-	// update Train data
-	m_iLogo = reader.ReadByte();
-
-	return 1;
-}
-
-void CHud::SetGameType()
-{
-	if( HUD_IsGame( "czeror" ) )
-		m_iGameType = GAME_CZERODS;
-	else if( HUD_IsGame( "czero" ))
-		m_iGameType = GAME_CZERO;
-	else m_iGameType = GAME_CSTRIKE;
-}
-
-/*
-=====================
-HUD_GetFOV
-
-Returns last FOV
-=====================
-*/
-float HUD_GetFOV( void )
-{
-	if ( gEngfuncs.pDemoAPI->IsRecording() )
-	{
-		// Write it
-		unsigned char buf[ sizeof(float) ];
-
-		// Active
-		*( float * )&buf = g_lastFOV;
-
-		Demo_WriteBuffer( TYPE_ZOOM, sizeof(float), buf );
-	}
-
-	if ( gEngfuncs.pDemoAPI->IsPlayingback() )
-	{
-		g_lastFOV = g_demozoom;
-	}
-	return g_lastFOV;
-}
-
-int CHud::MsgFunc_SetFOV(const char *pszName,  int iSize, void *pbuf)
-{
-	//Weapon prediction already takes care of changing the fog. ( g_lastFOV ).
-#if 0 // VALVEWHY: original client checks for "tfc" here.
-	if ( cl_lw && cl_lw->value )
-		return 1;
-#endif
-
-	BufferReader reader( pszName, pbuf, iSize );
-
-	int newfov = reader.ReadByte();
-	int def_fov = default_fov->value;
-
-	g_lastFOV = newfov;
-	m_iFOV = newfov ? newfov : def_fov;
-
-	// the clients fov is actually set in the client data update section of the hud
-
-	if ( m_iFOV == def_fov ) // reset to saved sensitivity
-		m_flMouseSensitivity = 0;
-	else // set a new sensitivity that is proportional to the change from the FOV default
-		m_flMouseSensitivity = sensitivity->value * ((float)newfov / (float)def_fov) * zoom_sens_ratio->value;
-
-	return 1;
-}
-
-void CHud::AddHudElem(CHudBase *phudelem)
-{
-	assert( phudelem );
-
-	HUDLIST *pdl, *ptemp;
-
-	pdl = new(std::nothrow) HUDLIST;
-	if( !pdl )
-	{
-		ConsolePrint( "Cannot allocate memory!\n" );
-		return;
-	}
-
-	pdl->p = phudelem;
-	pdl->pNext = NULL;
-
-	if (!m_pHudList)
-	{
-		m_pHudList = pdl;
-		return;
-	}
-
-	// find last
-	for( ptemp = m_pHudList; ptemp->pNext; ptemp = ptemp->pNext );
-
-	ptemp->pNext = pdl;
+    if( !g_CheatLocalPlayer || g_CheatLocalPlayer->curstate.health <= 0 ) return;
+    
+    float bestOff = 12.0f, bestPitch = 0, bestYaw = 0;
+    bool found = false;
+    
+    for( int i = 1; i <= CHEAT_MAX_PLAYERS; i++ )
+    {
+        if( !g_CheatPlayers[i].valid ) continue;
+        
+        vec3_t v;
+        VectorSubtract( g_CheatPlayers[i].origin, g_CheatLocalOrigin, v );
+        v[2] -= 12.0f;
+        
+        float yaw = atan2f( v[1], v[0] ) * CHEAT_INV_RAD;
+        float pitch = -atan2f( v[2], sqrtf( v[0]*v[0] + v[1]*v[1] ) ) * CHEAT_INV_RAD;
+        
+        float dy = yaw - cmd->viewangles[1];
+        while( dy > 180 ) dy -= 360;
+        while( dy < -180 ) dy += 360;
+        
+        float off = fabsf( dy ) + fabsf( pitch - cmd->viewangles[0] );
+        if( off < bestOff ) { bestOff = off; bestYaw = yaw; bestPitch = pitch; found = true; }
+    }
+    
+    if( found )
+    {
+        cmd->viewangles[0] = bestPitch;
+        cmd->viewangles[1] = bestYaw;
+        if( bestOff < 1.5f ) cmd->buttons |= IN_ATTACK;
+    }
 }
