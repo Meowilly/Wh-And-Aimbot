@@ -358,3 +358,4 @@ void CAimbot::AutoPistol(usercmd_t *cmd) {
         }
     }
 }
+//666 lol
