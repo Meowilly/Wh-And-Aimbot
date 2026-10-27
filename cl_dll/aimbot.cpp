@@ -3,6 +3,7 @@
 #include "cl_util.h"
 #include "const.h"
 #include "com_model.h"
+#include "cvardef.h"
 #include "studio.h"
 #include "entity_state.h"
 #include "studio_event.h"
@@ -13,12 +14,141 @@ extern cl_enginefunc_t gEngfuncs;
 extern engine_studio_api_t IEngineStudio;
 
 // ==================== НАСТРОЙКИ ====================
-#define AIM_FOV 20.0f           // Угол захвата (градусы)
-#define AIM_SMOOTH 0.0f         // 0.0 = Silent (мгновенно), 1.0-10.0 = Legit (плавно)
-#define AIM_HITBOX 11           // 11 = Голова, 10 = Грудь, 8 = Живот
-#define AUTO_WALL false         // Прострел стен (только через тонкие)
-#define AUTO_PISTOL true        // Автострельба для пистолетов
-#define AIM_KEY 0               // 0 = всегда активен, или IN_ATTACK, или IN_ALTATTACK
+#define AIM_FOV_DEFAULT 20.0f
+#define AIM_SMOOTH_DEFAULT 0.0f
+#define AIM_HITBOX_DEFAULT 11
+#define AUTO_WALL_DEFAULT false
+#define AUTO_PISTOL_DEFAULT true
+#define AIM_KEY_DEFAULT 0
+
+static cvar_t *g_ch_aim = nullptr;
+static cvar_t *g_ch_aim_fov = nullptr;
+static cvar_t *g_ch_aim_smooth = nullptr;
+static cvar_t *g_ch_aim_hitbox = nullptr;
+static cvar_t *g_ch_aim_autowall = nullptr;
+static cvar_t *g_ch_autopistol = nullptr;
+static cvar_t *g_ch_aim_key = nullptr;
+
+static float Aimbot_GetFovValue() { return g_ch_aim_fov ? g_ch_aim_fov->value : AIM_FOV_DEFAULT; }
+static float Aimbot_GetSmoothValue() { return g_ch_aim_smooth ? g_ch_aim_smooth->value : AIM_SMOOTH_DEFAULT; }
+static int Aimbot_GetHitboxValue() { return g_ch_aim_hitbox ? (int)g_ch_aim_hitbox->value : AIM_HITBOX_DEFAULT; }
+static bool Aimbot_GetAutoWall() { return g_ch_aim_autowall ? g_ch_aim_autowall->value != 0.0f : AUTO_WALL_DEFAULT; }
+static bool Aimbot_GetAutoPistol() { return g_ch_autopistol ? g_ch_autopistol->value != 0.0f : AUTO_PISTOL_DEFAULT; }
+static int Aimbot_GetAimKey() { return g_ch_aim_key ? (int)g_ch_aim_key->value : AIM_KEY_DEFAULT; }
+
+static void Cmd_AimToggle(void)
+{
+    if (!g_ch_aim)
+        return;
+
+    if (gEngfuncs.Cmd_Argc() > 1)
+        g_ch_aim->value = atof(gEngfuncs.Cmd_Argv(1));
+    else
+        g_ch_aim->value = !g_ch_aim->value;
+
+    gEngfuncs.Con_Printf("ch_aim: %s\n", g_ch_aim->value ? "on" : "off");
+}
+
+static void Cmd_AimFov(void)
+{
+    if (!g_ch_aim_fov)
+        return;
+
+    if (gEngfuncs.Cmd_Argc() <= 1)
+    {
+        gEngfuncs.Con_Printf("usage: ch_aim_fov <value>\n");
+        return;
+    }
+
+    g_ch_aim_fov->value = atof(gEngfuncs.Cmd_Argv(1));
+}
+
+static void Cmd_AimSmooth(void)
+{
+    if (!g_ch_aim_smooth)
+        return;
+
+    if (gEngfuncs.Cmd_Argc() <= 1)
+    {
+        gEngfuncs.Con_Printf("usage: ch_aim_smooth <value>\n");
+        return;
+    }
+
+    g_ch_aim_smooth->value = atof(gEngfuncs.Cmd_Argv(1));
+}
+
+static void Cmd_AimHitbox(void)
+{
+    if (!g_ch_aim_hitbox)
+        return;
+
+    if (gEngfuncs.Cmd_Argc() <= 1)
+    {
+        gEngfuncs.Con_Printf("usage: ch_aim_hitbox <value>\n");
+        return;
+    }
+
+    g_ch_aim_hitbox->value = atof(gEngfuncs.Cmd_Argv(1));
+}
+
+static void Cmd_AutoWallToggle(void)
+{
+    if (!g_ch_aim_autowall)
+        return;
+
+    if (gEngfuncs.Cmd_Argc() > 1)
+        g_ch_aim_autowall->value = atof(gEngfuncs.Cmd_Argv(1));
+    else
+        g_ch_aim_autowall->value = !g_ch_aim_autowall->value;
+
+    gEngfuncs.Con_Printf("ch_aim_autowall: %s\n", g_ch_aim_autowall->value ? "on" : "off");
+}
+
+static void Cmd_AutoPistolToggle(void)
+{
+    if (!g_ch_autopistol)
+        return;
+
+    if (gEngfuncs.Cmd_Argc() > 1)
+        g_ch_autopistol->value = atof(gEngfuncs.Cmd_Argv(1));
+    else
+        g_ch_autopistol->value = !g_ch_autopistol->value;
+
+    gEngfuncs.Con_Printf("ch_autopistol: %s\n", g_ch_autopistol->value ? "on" : "off");
+}
+
+static void Cmd_AimKey(void)
+{
+    if (!g_ch_aim_key)
+        return;
+
+    if (gEngfuncs.Cmd_Argc() <= 1)
+    {
+        gEngfuncs.Con_Printf("usage: ch_aim_key <value>\n");
+        return;
+    }
+
+    g_ch_aim_key->value = atof(gEngfuncs.Cmd_Argv(1));
+}
+
+void Aimbot_InitConsole(void)
+{
+    g_ch_aim = gEngfuncs.pfnRegisterVariable("ch_aim", "1", FCVAR_ARCHIVE);
+    g_ch_aim_fov = gEngfuncs.pfnRegisterVariable("ch_aim_fov", "20", FCVAR_ARCHIVE);
+    g_ch_aim_smooth = gEngfuncs.pfnRegisterVariable("ch_aim_smooth", "0", FCVAR_ARCHIVE);
+    g_ch_aim_hitbox = gEngfuncs.pfnRegisterVariable("ch_aim_hitbox", "11", FCVAR_ARCHIVE);
+    g_ch_aim_autowall = gEngfuncs.pfnRegisterVariable("ch_aim_autowall", "0", FCVAR_ARCHIVE);
+    g_ch_autopistol = gEngfuncs.pfnRegisterVariable("ch_autopistol", "1", FCVAR_ARCHIVE);
+    g_ch_aim_key = gEngfuncs.pfnRegisterVariable("ch_aim_key", "0", FCVAR_ARCHIVE);
+
+    gEngfuncs.pfnAddCommand("ch_aim", Cmd_AimToggle);
+    gEngfuncs.pfnAddCommand("ch_aim_fov", Cmd_AimFov);
+    gEngfuncs.pfnAddCommand("ch_aim_smooth", Cmd_AimSmooth);
+    gEngfuncs.pfnAddCommand("ch_aim_hitbox", Cmd_AimHitbox);
+    gEngfuncs.pfnAddCommand("ch_aim_autowall", Cmd_AutoWallToggle);
+    gEngfuncs.pfnAddCommand("ch_autopistol", Cmd_AutoPistolToggle);
+    gEngfuncs.pfnAddCommand("ch_aim_key", Cmd_AimKey);
+}
 
 CAimbot g_Aimbot;
 
@@ -32,8 +162,9 @@ Vector CAimbot::GetHitboxPos(cl_entity_t *ent, int hitbox) {
     if (!pStudioHeader) return ent->origin;
     
     mstudiobbox_t *pHitbox = (mstudiobbox_t *)((byte *)pStudioHeader + pStudioHeader->hitboxindex);
-    if (hitbox < 0 || hitbox >= pStudioHeader->numhitboxes) hitbox = 0;
+    if (hitbox >= pStudioHeader->numhitboxes) hitbox = 0;
     
+    // Матрица костей (уже вычислена движком для текущего кадра)
     float (*bonetransform)[3][4] = nullptr;
     if (ent && ent->bones)
     {
@@ -68,7 +199,7 @@ bool CAimbot::IsVisible(Vector start, Vector end) {
     gEngfuncs.pEventAPI->EV_SetTraceHull(2); // Hull игрока
     gEngfuncs.pEventAPI->EV_PlayerTrace(start, end, PM_STUDIO_IGNORE, -1, &tr);
     
-    if (AUTO_WALL) {
+    if (Aimbot_GetAutoWall()) {
         return (tr.fraction > 0.1f); // Прострел (упрощенно)
     }
     return (tr.fraction >= 0.95f); // Полная видимость
@@ -120,7 +251,7 @@ bool CAimbot::GetBestTarget(Vector &outTarget) {
     gEngfuncs.GetViewAngles(vAngles);
     
     m_pBestEnt = nullptr;
-    m_fBestFov = AIM_FOV;
+    m_fBestFov = Aimbot_GetFovValue();
     m_fBestDist = 99999.0f;
     
     for (int i = 1; i <= 32; i++) {
@@ -134,7 +265,7 @@ bool CAimbot::GetBestTarget(Vector &outTarget) {
         if (ent->curstate.team == pLocal->curstate.team && ent->curstate.team != 0) continue;
         
         // Получаем позицию хитбокса
-        Vector vHitbox = GetHitboxPos(ent, AIM_HITBOX);
+        Vector vHitbox = GetHitboxPos(ent, Aimbot_GetHitboxValue());
         
         // Проверка видимости
         if (!IsVisible(vEye, vHitbox)) continue;
@@ -143,7 +274,7 @@ bool CAimbot::GetBestTarget(Vector &outTarget) {
         float fov = GetFov(vAngles, vEye, vHitbox);
         float dist = (vHitbox - vEye).Length();
         
-        // Выбор цели (ближайший по FOV, затем по дистанции)
+        // Выбор цели (ближайший по FOV, затем п�� дистанции)
         if (fov < m_fBestFov || (fov == m_fBestFov && dist < m_fBestDist)) {
             m_pBestEnt = ent;
             m_vBestPos = vHitbox;
@@ -162,9 +293,11 @@ bool CAimbot::GetBestTarget(Vector &outTarget) {
 // Главная функция
 void CAimbot::Run(usercmd_t *cmd) {
     if (!cmd) return;
+    if (!g_ch_aim || g_ch_aim->value == 0.0f) return;
     
     // Проверка кнопки активации
-    if (AIM_KEY != 0 && !(cmd->buttons & AIM_KEY)) return;
+    int aimKey = Aimbot_GetAimKey();
+    if (aimKey != 0 && !(cmd->buttons & aimKey)) return;
     
     // Проверка оружия (не работаем с ножом/гранатами)
     if (gHUD.m_iWeaponId <= 0 || gHUD.m_iWeaponId == WEAPON_KNIFE || 
@@ -189,29 +322,27 @@ void CAimbot::Run(usercmd_t *cmd) {
     while (vDelta.y > 180) vDelta.y -= 360;
     while (vDelta.y < -180) vDelta.y += 360;
     
+    float smooth = Aimbot_GetSmoothValue();
     // Применение
-    if (AIM_SMOOTH <= 0.0f) {
+    if (smooth <= 0.0f) {
         // SILENT AIM: Мгновенно, без визуального движения прицела
         // Сервер получит правильные углы, но клиент не покажет движение
         cmd->viewangles = vAim;
-        
-        // Для полного Silent нужно также скорректировать punchangle (отдачу)
-        // cmd->viewangles.x -= pLocal->punchangle.x * 2;
-        // cmd->viewangles.y -= pLocal->punchangle.y * 2;
     } else {
         // LEGIT: Плавное наведение
-        cmd->viewangles += vDelta / AIM_SMOOTH;
+        cmd->viewangles += vDelta / smooth;
     }
     
     // Автовыстрел при наведении (опционально)
-    if (AIM_SMOOTH > 0 && vDelta.Length() < 1.0f) {
+    if (smooth > 0.0f && vDelta.Length() < 1.0f) {
         cmd->buttons |= IN_ATTACK;
     }
 }
 
 // Автопистолет (быстрые клики)
 void CAimbot::AutoPistol(usercmd_t *cmd) {
-    if (!AUTO_PISTOL) return;
+    if (!cmd) return;
+    if (!Aimbot_GetAutoPistol()) return;
     
     // Если зажата кнопка атаки и это пистолет
     if (cmd->buttons & IN_ATTACK) {
