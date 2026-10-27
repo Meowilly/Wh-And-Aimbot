@@ -1,3 +1,6 @@
+#ifndef PROGDEFS_H
+#define PROGDEFS_H
+
 #define BOUNCE_METAL		BREAK_METAL
 #define BOUNCE_FLESH		BREAK_FLESH
 #define BOUNCE_WOOD			BREAK_WOOD
@@ -13,7 +16,7 @@
 
 // Rendering constants
 enum 
-{	
+{ 	
 	kRenderNormal,		// src
 	kRenderTransColor,		// c*a+dest*(1-a)
 	kRenderTransTexture,	// src*a+dest*(1-a)
@@ -33,7 +36,7 @@ enum
 	kRenderFxFadeSlow, 
 	kRenderFxFadeFast, 
 	kRenderFxSolidSlow, 
-	kRenderFxSolidFast, 	   
+	kRenderFxSolidFast,	   
 	kRenderFxStrobeSlow, 
 	kRenderFxStrobeFast, 
 	kRenderFxStrobeFaster, 
@@ -94,11 +97,11 @@ typedef struct
 	qboolean	allsolid;		// if true, plane is not valid
 	qboolean	startsolid;	// if true, the initial point was in a solid area
 	qboolean	inopen, inwater;
-	float	fraction;		// time completed, 1.0 = didn't hit anything
-	vec3_t	endpos;		// final position
-	plane_t	plane;		// surface normal at impact
-	edict_t	*ent;		// entity the surface is on
-	int		hitgroup;		// 0 == generic, non zero is specific body part
+	float		fraction;		// time completed, 1.0 = didn't hit anything
+	vec3_t		endpos;		// final position
+	plane_t		plane;		// surface normal at impact
+	edict_t		*ent;		// entity the surface is on
+	int			hitgroup;		// 0 == generic, non zero is specific body part
 } trace_t;
 
-#endif//CONST_H
+#endif // PROGDEFS_H
